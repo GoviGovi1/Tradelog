@@ -145,17 +145,67 @@ function holdings(){const H={};const tr=[...S.trades].sort((a,b)=>(a.date+a.t).l
 function totals(){const H=holdings();const v=H.reduce((a,h)=>a+h.value,0),c=H.reduce((a,h)=>a+h.cost,0),re=H.reduce((a,h)=>a+h.real,0);return{H,v,c,re,pnl:v-c}}
 let tab='dash';
 function theme(){const t=S.theme||'auto';const dk=t==='dark'||(t==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=dk?'dark':'light';document.querySelector('meta[name=theme-color]').content=dk?'#0b0d17':'#f4f5fb'}
-function greet(){const h=new Date().getHours();const g=h<5?'Good night':h<12?'Good morning':h<17?'Good afternoon':'Good evening';$('hi').textContent=g+', '+(S.name||'friend');$('hDate').textContent=new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'short'});$('av').textContent=((S.name||'?')[0]||'?').toUpperCase()}
+function greetWord(){const h=new Date().getHours();return h<5?'Good night':h<12?'Good morning':h<17?'Good afternoon':'Good evening'}
+function greet(){const g=greetWord();$('hi').textContent=g+', '+(S.name||'friend');$('hDate').textContent=new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'short'});$('av').textContent=((S.name||'?')[0]||'?').toUpperCase()}
 const IC={dash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>',assets:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="9" cy="9" r="6"/><path d="M15.5 9.2A6 6 0 1 1 9.2 15.5"/></svg>',set:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>'};
 function navR(){$('nav').innerHTML=[['dash','Home'],['assets','Assets'],['set','Settings']].map(([k,n])=>`<button class="${tab===k?'on':''}" onclick="tab='${k}';render();scrollTo(0,0)">${IC[k]}${n}</button>`).join('')}
 const icon=(sym,c='ci')=>S.icons&&S.icons[sym]?`<img class="${c}" src="${S.icons[sym]}" alt="" onerror="this.outerHTML='<div class=\\'${c} ph\\'>${esc(sym.slice(0,3))}</div>'">`:`<div class="${c} ph">${esc(sym.slice(0,3))}</div>`;
 const pf=v=>usd(v,v<1?6:2);
 function liveBar(){const L=S.lastOk;const fresh=L&&Date.now()-L<180000;return`<div class="live"><span class="dot ${fresh?'':'off'}"></span>${fresh?'LIVE · updated '+new Date(L).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})+' · every 60s':'Offline · showing last saved prices'}</div>`}
 function ticker(H){const L=H.filter(h=>S.prices[h.sym]&&!S.prices[h.sym].manual);if(!L.length)return'';return`<div class="ticker">${L.map(h=>{const p=S.prices[h.sym],c=p.chg||0;return`<div class="tk">${icon(h.sym,'')}<div><b>${esc(h.sym)} ${pf(p.v)}</b><span class="${cls(c)}">${c>=0?'▲':'▼'} ${Math.abs(c).toFixed(2)}% 24h</span></div></div>`}).join('')}</div>`}
+let sumPer='Week';
+function periodBounds(kind){const n=new Date(),y=n.getFullYear(),m=n.getMonth(),d=n.getDate();let a,b;
+ if(kind==='Month'){a=new Date(y,m,1);b=new Date(y,m+1,0)}
+ else if(kind==='Year'){a=new Date(y,0,1);b=new Date(y,11,31)}
+ else{const back=(n.getDay()+6)%7;a=new Date(y,m,d-back);b=new Date(a.getFullYear(),a.getMonth(),a.getDate()+6)}
+ return{a:ds(a),b:ds(b)}}
+function fmtPretty(iso){const p=String(iso||'').split('-').map(Number);return new Date(p[0],(p[1]||1)-1,p[2]||1).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}
+function summaryData(){const kind=sumPer==='Month'||sumPer==='Year'?sumPer:'Week';const {a,b}=periodBounds(kind);
+ const trades=(S.trades||[]).filter(t=>t.date&&t.date>=a&&t.date<=b);
+ const buys=trades.filter(t=>t.side==='Buy'),sells=trades.filter(t=>t.side==='Sell');
+ const spent=buys.reduce((s,t)=>s+(+t.usd||0),0);
+ const spentLocal=buys.reduce((s,t)=>s+(+t.usd||0)*(t.rate||FX()),0);
+ const assets={};buys.forEach(t=>{if(!t.sym)return;assets[t.sym]=(assets[t.sym]||0)+(+t.qty||0)});
+ const T=totals();const fx=FX();const pnl=T.pnl;
+ return{kind,a,b,buys:buys.length,sells:sells.length,spent,spentLocal,assets,T,fx,localCost:T.c*fx,localVal:T.v*fx,localPnl:pnl*fx,pnl,pp:T.c?pnl/T.c*100:0}}
+function sumAdj(){return sumPer==='Month'?'monthly':sumPer==='Year'?'yearly':'weekly'}
+function summarySubject(){return 'Trade Log '+sumAdj()+' summary'}
+function summaryText(){const D=summaryData();const syms=Object.keys(D.assets).sort();
+ const lines=[greetWord()+', '+(S.name||'friend'),'',D.kind+' · '+fmtPretty(D.a)+' - '+fmtPretty(D.b),'','Buys: '+D.buys];
+ if(D.sells)lines.push('Sells: '+D.sells);
+ lines.push('Spent: '+usd(D.spent)+(isUSD()?'':' · '+ghs(D.spentLocal)),'','Assets bought');
+ if(!syms.length)lines.push('None');else syms.forEach(s=>lines.push(qf(D.assets[s])+' '+s));
+ lines.push('','Portfolio','Cost: '+usd(D.T.c)+(isUSD()?'':' · '+ghs(D.localCost)),'Value: '+usd(D.T.v)+(isUSD()?'':' · '+ghs(D.localVal)),'P&L: '+sg(D.pnl)+usd(D.pnl)+(isUSD()?'':' · '+sg(D.pnl)+ghs(D.localPnl))+' ('+pct(D.pp)+')');
+ return lines.join('\n')}
+function setSum(p){if(p==='Month'||p==='Year'||p==='Week')sumPer=p;render()}
+function waUrl(){return 'https://wa.me/?text='+encodeURIComponent(summaryText())}
+function mailUrl(){const e=(_user&&_user.email)||'';return 'mailto:'+e+'?subject='+encodeURIComponent(summarySubject())+'&body='+encodeURIComponent(summaryText())}
+function shareWa(){window.open(waUrl(),'_blank','noopener')}
+function shareMail(){location.href=mailUrl()}
+function shareNative(){if(navigator.share)navigator.share({title:summarySubject(),text:summaryText()}).catch(()=>{})}
+function summaryCard(){const D=summaryData();const syms=Object.keys(D.assets).sort();
+ const seg=['Week','Month','Year'].map(k=>`<button type="button" class="${sumPer===k?'on':''}" onclick="setSum('${k}')">${k}</button>`).join('');
+ const loc=v=>isUSD()?'':'<div class="mute" style="font-weight:600">'+ghs(v)+'</div>';
+ const assets=syms.length?syms.map(s=>`<div class="row" style="padding:3px 0"><span>${esc(s)}</span><b>${qf(D.assets[s])}</b></div>`).join(''):'<div class="mute">None this period.</div>';
+ return`<div class="sec">Summary</div><div class="card"><div class="seg">${seg}</div>
+ <div style="font-weight:700;margin:12px 0 2px">${esc(greetWord())}, ${esc(S.name||'friend')}</div>
+ <div class="mute">${esc(fmtPretty(D.a))} – ${esc(fmtPretty(D.b))}</div>
+ <div class="row" style="padding:8px 0 0"><span class="mute">Buys</span><b>${D.buys}</b></div>
+ ${D.sells?`<div class="row" style="padding:2px 0 0"><span class="mute">Sells</span><b>${D.sells}</b></div>`:''}
+ <div class="row" style="padding:2px 0 4px"><span class="mute">Spent</span><b style="text-align:right">${usd(D.spent)}${loc(D.spentLocal)}</b></div>
+ <div class="mute" style="font-weight:700;color:var(--ink);margin-top:8px">Assets bought</div>${assets}
+ <div class="mute" style="font-weight:700;color:var(--ink);margin-top:8px">Portfolio</div>
+ <div class="row" style="padding:3px 0"><span class="mute">Total cost</span><b style="text-align:right">${usd(D.T.c)}${loc(D.localCost)}</b></div>
+ <div class="row" style="padding:3px 0"><span class="mute">Value</span><b style="text-align:right">${usd(D.T.v)}${loc(D.localVal)}</b></div>
+ <div class="row" style="padding:3px 0"><span class="mute">P&L</span><b class="${cls(D.pnl)}" style="text-align:right">${sg(D.pnl)}${usd(D.pnl)} (${pct(D.pp)})${isUSD()?'':'<div class="'+cls(D.pnl)+'" style="font-weight:700">'+sg(D.pnl)+ghs(D.localPnl)+'</div>'}</b></div>
+ <div style="height:12px"></div><button class="btn s" type="button" onclick="shareWa()">Share on WhatsApp</button>
+ <div style="height:8px"></div><button class="btn s" type="button" onclick="shareMail()">Email</button>
+ ${navigator.share?'<div style="height:8px"></div><button class="btn s" type="button" onclick="shareNative()">Share</button>':''}</div>`}
 function dash(){const T=totals();const d24=T.H.reduce((a,h)=>{const p=S.prices[h.sym];return a+(p&&p.chg&&!p.manual?h.value-h.value/(1+p.chg/100):0)},0);
  return`<div class="hero"><div class="l">Net worth</div><div class="big">${usd(T.v)}</div><div class="sub">${isUSD()?'':'≈ '+ghs(T.v*FX())+' · '}<span class="pill">${sg(d24)}${usd(d24)} 24h</span></div>
  <div class="hstats"><div><small>Profit / loss</small><b>${sg(T.pnl)}${usd(T.pnl)}</b><small>${pct(T.c?T.pnl/T.c*100:0)}</small></div><div><small>Invested</small><b>${usd(T.c)}</b><small>Realized ${sg(T.re)}${usd(T.re)}</small></div></div></div>
  ${liveBar()}${ticker(T.H)}${cedis(T.H)}
+ ${summaryCard()}
  <div class="sec">Holdings <small onclick="tab='assets';render()" style="color:var(--acc)">See all</small></div><div class="card">${T.H.length?T.H.slice(0,4).map(h=>assetRow(h,T.v)).join(''):'<div class="empty">No trades yet. Tap + to log your first buy.</div>'}</div>`}
 function cedis(H){if(isUSD())return'';const B=H.filter(h=>h.boughtUsd>0||h.qty>0);if(!B.length)return'';const tg=B.reduce((a,h)=>a+h.boughtGhs,0),tw=B.reduce((a,h)=>a+h.worthLocal,0),d=tw-tg;
  return`<div class="sec">In ${CUR()}</div><div class="lw">${B.map(h=>{const diff=h.worthLocal-h.boughtGhs;return`<div class="lc">${icon(h.sym)}<div class="m"><b>${esc(h.sym)}</b><div class="mute">${qf(h.qty)} tokens</div></div><div class="cols"><div class="col"><div class="lbl">Bought</div><b>${ghs(h.boughtGhs)}</b></div><div class="col"><div class="lbl">Worth</div><b>${ghs(h.worthLocal)}</b><div class="${cls(diff)}" style="font-size:12px;font-weight:700">${(diff>=0?'+':'-')+Math.abs(diff).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div></div></div>`}).join('')}
