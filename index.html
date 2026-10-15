@@ -68,7 +68,7 @@ function migrate(){ // v1 -> v2: everything stored in USD, optional rate (GHS pe
 const persist=()=>{S.updatedAt=Date.now();localStorage.setItem(K,JSON.stringify(S));scheduleSync()};
 let _syncT=null,_syncing=false,_user=null,_fb=null;
 function fbOk(){return typeof firebaseConfigured==='function'&&firebaseConfigured()&&typeof firebase!=='undefined'}
-function initFb(){if(_fb||!fbOk())return null;try{if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);_fb={auth:firebase.auth(),db:firebase.firestore()};return _fb}catch(e){console.warn('Firebase init',e);return null}}
+function initFb(){if(_fb)return _fb;if(!fbOk())return null;try{if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);_fb={auth:firebase.auth(),db:firebase.firestore()};return _fb}catch(e){console.warn('Firebase init',e);return null}}
 function scheduleSync(){if(!_user)return;clearTimeout(_syncT);_syncT=setTimeout(()=>syncNow(false),1200)}
 function lastSyncTxt(){if(!S.lastSync)return'Not synced yet';const d=Date.now()-S.lastSync;if(d<60000)return'Synced just now';if(d<3600000)return'Synced '+Math.round(d/60000)+'m ago';return'Synced '+new Date(S.lastSync).toLocaleString()}
 async function syncNow(manual){if(!fbOk()||!_user||_syncing)return;_syncing=true;try{
