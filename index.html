@@ -38,6 +38,13 @@ nav button{flex:1;border:0;background:none;border-radius:20px;padding:8px 0 6px;
 .oblogo{width:64px;height:64px;border-radius:22px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;font-size:32px;box-shadow:0 14px 30px rgba(124,58,237,.4)}
 .obl{max-height:250px;overflow:auto;margin-top:8px;border-radius:14px;border:1px solid var(--line)}
 .curi{display:flex;align-items:center;gap:12px;width:100%;border:0;background:none;color:var(--ink);padding:10px 12px;font:inherit;text-align:left;border-top:1px solid var(--line)}.curi:first-child{border-top:0}.curi.on{background:var(--seg)}.fl{font-size:24px}.cn{flex:1}.cn b{display:block}.cn small{color:var(--mute)}.ck{color:var(--acc);font-weight:800}
+
+.btn.ggl{background:#fff;color:#1f1f1f;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:var(--sh)}.btn.ggl img{width:18px;height:18px}
+.btn.out{background:var(--seg);color:var(--ink)}.authbox{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.acct{display:flex;align-items:center;gap:12px}.acct .av2{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;display:grid;place-items:center;font-weight:800;flex:none}
+.syncok{color:var(--g);font-size:12px;font-weight:600}.syncwarn{color:var(--mute);font-size:12px}
+.choice{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+
 </style></head><body><div class="wrap">
 <header><div><div class="d" id="hDate"></div><h1 id="hi"></h1></div><button class="av" id="av" onclick="tab='set';render()"></button></header>
 <main id="view"></main></div>
@@ -45,6 +52,10 @@ nav button{flex:1;border:0;background:none;border-radius:20px;padding:8px 0 6px;
 <nav id="nav"></nav>
 <div class="ob" id="ob"></div>
 <div class="sheet" id="sheet" onclick="if(event.target===this)closeS()"><div class="in" id="sheetIn"></div></div>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 <script>
 const K='tradelog-v1';
 const $=id=>document.getElementById(id);
@@ -54,7 +65,69 @@ function migrate(){ // v1 -> v2: everything stored in USD, optional rate (GHS pe
  if(S.v!==2){S.trades=(S.trades||[]).map(t=>{if(t.usd!=null)return t;const isG=t.cur==='GHS';return{id:t.id,t:t.t,side:t.side,sym:t.sym,type:t.type||'Crypto',qty:+t.qty,usd:isG?(+t.cost)/fx:+t.cost,rate:isG?fx:null,date:t.date,note:t.note||''}});
  for(const s in S.prices){const p=S.prices[s];if(p&&p.cur==='GHS'){p.v=p.v/fx;p.cur='USD'}}
  }if(S.trades.length&&!S.cur)S.cur='GHS';S.v=4;delete S.disp;delete S.snaps;persist()}
-const persist=()=>localStorage.setItem(K,JSON.stringify(S));
+const persist=()=>{S.updatedAt=Date.now();localStorage.setItem(K,JSON.stringify(S));scheduleSync()};
+let _syncT=null,_syncing=false,_user=null,_fb=null;
+function fbOk(){return typeof firebaseConfigured==='function'&&firebaseConfigured()&&typeof firebase!=='undefined'}
+function initFb(){if(_fb||!fbOk())return null;try{if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);_fb={auth:firebase.auth(),db:firebase.firestore()};return _fb}catch(e){console.warn('Firebase init',e);return null}}
+function scheduleSync(){if(!_user)return;clearTimeout(_syncT);_syncT=setTimeout(()=>syncNow(false),1200)}
+function lastSyncTxt(){if(!S.lastSync)return'Not synced yet';const d=Date.now()-S.lastSync;if(d<60000)return'Synced just now';if(d<3600000)return'Synced '+Math.round(d/60000)+'m ago';return'Synced '+new Date(S.lastSync).toLocaleString()}
+async function syncNow(manual){if(!fbOk()||!_user||_syncing)return;_syncing=true;try{
+  const fb=initFb();const uref=fb.db.collection('users').doc(_user.uid);const tref=uref.collection('trades');
+  const snap=await uref.get();const cloud=snap.exists?snap.data():null;const cloudAt=cloud&&cloud.updatedAt||0;const localAt=S.updatedAt||0;
+  const cloudTrades=[];const qs=await tref.get();qs.forEach(d=>cloudTrades.push(d.data()));
+  const localHas=!!(S.trades&&S.trades.length);const cloudHas=cloudTrades.length>0;
+  let mode='push';
+  if(!localHas&&cloudHas)mode='pull';
+  else if(localHas&&!cloudHas)mode='push';
+  else if(localHas&&cloudHas){
+    if(Math.abs(localAt-cloudAt)<2000)mode='push'; // essentially same
+    else if(localAt>cloudAt)mode='push';
+    else if(cloudAt>localAt)mode='pull';
+    else mode='push';
+    // conflict: both have data and both updated recently differently
+    if(manual&&localHas&&cloudHas&&localAt&&cloudAt&&Math.abs(localAt-cloudAt)>5000){
+      const pick=await conflictAsk(localAt,cloudAt,S.trades.length,cloudTrades.length);
+      if(pick==='cloud')mode='pull';else if(pick==='local')mode='push';else{_syncing=false;return}
+    }
+  }
+  if(mode==='pull')await pullCloud(uref,cloud,cloudTrades);
+  else await pushCloud(uref,tref,cloudTrades);
+  S.lastSync=Date.now();localStorage.setItem(K,JSON.stringify(S));
+  if(manual)render();
+}catch(e){console.warn('sync',e);if(manual)alert('Sync failed. Check your connection and Firebase setup.')}finally{_syncing=false;if(manual)render()}}
+function conflictAsk(la,ca,ln,cn){return new Promise(res=>{
+  $('sheetIn').innerHTML=`<div class="row"><h3 style="margin:0">Sync conflict</h3><button class="lnk" onclick="closeS();window.__cf&&window.__cf(null)">Close</button></div>
+  <div class="card" style="margin-top:12px"><p class="mute">This phone and the cloud both have trades. Which should we keep?</p>
+  <div class="mute" style="margin:10px 0">Phone: ${ln} trades · updated ${new Date(la).toLocaleString()}<br>Cloud: ${cn} trades · updated ${new Date(ca).toLocaleString()}</div>
+  <button class="btn" onclick="closeS();window.__cf&&window.__cf('local')">Keep this phone</button>
+  <div style="height:8px"></div><button class="btn s" onclick="closeS();window.__cf&&window.__cf('cloud')">Keep cloud</button></div>`;
+  window.__cf=r=>{window.__cf=null;res(r)};$('sheet').classList.add('on')})}
+async function pushCloud(uref,tref,existing){
+  const meta={name:S.name||'',cur:S.cur||'USD',fx:S.fx,theme:S.theme||'auto',updatedAt:S.updatedAt||Date.now(),email:_user.email||''};
+  await uref.set(meta,{merge:true});
+  const localIds=new Set((S.trades||[]).map(t=>t.id));
+  let batch=firebase.firestore().batch(),n=0;
+  const flush=async()=>{if(!n)return;await batch.commit();batch=firebase.firestore().batch();n=0};
+  for(const t of S.trades||[]){batch.set(tref.doc(String(t.id)),Object.assign({},t,{updatedAt:t.updatedAt||S.updatedAt||Date.now()}));n++;if(n>=400)await flush()}
+  for(const t of existing){if(t.id&&!localIds.has(t.id)){batch.delete(tref.doc(String(t.id)));n++;if(n>=400)await flush()}}
+  await flush();
+}
+async function pullCloud(uref,cloud,cloudTrades){
+  if(cloud){if(cloud.name)S.name=cloud.name;if(cloud.cur)S.cur=cloud.cur;if(cloud.fx!=null)S.fx=cloud.fx;if(cloud.theme)S.theme=cloud.theme;S.updatedAt=cloud.updatedAt||Date.now()}
+  S.trades=(cloudTrades||[]).map(t=>({id:t.id,t:t.t,side:t.side,sym:t.sym,type:t.type||'Crypto',qty:+t.qty,px:t.px,usd:+t.usd,rate:t.rate??null,date:t.date,note:t.note||'',updatedAt:t.updatedAt}));
+  localStorage.setItem(K,JSON.stringify(S));render();await liveFx(false);refresh();
+}
+async function signInGoogle(){const fb=initFb();if(!fb){alert('Cloud sync is not set up yet. Ask the host to add Firebase keys (see SETUP.md).');return}
+  try{await fb.auth.signInWithPopup(firebase.auth.GoogleAuthProvider?new firebase.auth.GoogleAuthProvider():new firebase.auth.GoogleAuthProvider())}catch(e){
+    if(e.code==='auth/popup-blocked'||e.code==='auth/cancelled-popup-request'){try{await fb.auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider())}catch(e2){alert(e2.message||'Sign-in failed')}}
+    else alert(e.message||'Sign-in failed')}}
+async function signInEmail(email,pass,isNew){const fb=initFb();if(!fb){alert('Cloud sync is not set up yet.');return}
+  try{if(isNew)await fb.auth.createUserWithEmailAndPassword(email,pass);else await fb.auth.signInWithEmailAndPassword(email,pass)}catch(e){alert(e.message||'Sign-in failed')}}
+async function signOut(){const fb=initFb();if(fb)await fb.auth.signOut();_user=null;render()}
+function watchAuth(){if(!fbOk())return;const fb=initFb();if(!fb)return;
+  fb.auth.onAuthStateChanged(async u=>{_user=u||null;if(u){if(!S.name&&u.displayName){S.name=u.displayName.split(' ')[0];localStorage.setItem(K,JSON.stringify(S))}
+    await syncNow(false);if(!S.cur||!S.name)onboard();else if($('ob'))$('ob').style.display='none';render()}else render()})}
+
 migrate();
 const usd=(v,d=2)=>(v<0?'-':'')+'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
 const CUR=()=>S.cur||'USD',isUSD=()=>CUR()==='USD',FX=()=>+S.fx||1;
@@ -91,10 +164,16 @@ function assetRow(h,tv){const p=S.prices[h.sym];const w=tv?h.value/tv*100:0;retu
 function assets(){const T=totals();const tp=T.H.reduce((a,h)=>a+h.pnl+h.real,0);return`<div class="sec">Assets <small>${T.H.length} coins</small></div>${liveBar()}<div class="card">${T.H.length?T.H.map(h=>assetRow(h,T.v)).join(''):'<div class="empty">No assets yet.</div>'}</div>
  <div class="sec">P&L per asset</div><div class="card">${T.H.map(h=>`<div class="cedi">${icon(h.sym)}<div class="m"><b>${esc(h.sym)}</b><div class="mute">cost ${usd(h.cost)}${h.real?' · realized '+sg(h.real)+usd(h.real):''}</div></div><b class="${cls(h.pnl+h.real)}">${sg(h.pnl+h.real)}${usd(h.pnl+h.real)}</b></div>`).join('')||'<div class="empty">—</div>'}${T.H.length?`<div class="row" style="margin-top:10px;font-weight:800"><span>Total</span><span class="${cls(tp)}">${sg(tp)}${usd(tp)}</span></div>`:''}</div>`}
 
-function settings(){return`<div class="sec">Settings</div><div class="card"><h3>Appearance</h3><div class="seg">${["auto","light","dark"].map(t=>`<button class="${(S.theme||"auto")===t?"on":""}" onclick="S.theme='${t}';persist();render()">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div></div><div class="card"><h3>Profile</h3><label>Your name</label><input id="sName" value="${esc(S.name||'')}"><label>Local currency</label><button class="btn s" style="text-align:left;display:flex;justify-content:space-between" onclick="curPick(c=>{S.cur=c;S.fx=null;persist();liveFx(true).then(render);render()})"><span>${curLbl(CUR())}</span><span>Change ›</span></button>
+function settings(){const cfg=fbOk();const u=_user;return`<div class="sec">Settings</div>
+ <div class="card"><h3>Account</h3>${u?`<div class="acct"><div class="av2">${esc((u.displayName||u.email||'?')[0].toUpperCase())}</div><div class="m"><b>${esc(u.displayName||S.name||'Signed in')}</b><div class="mute">${esc(u.email||'')}</div><div class="${S.lastSync?'syncok':'syncwarn'}">${lastSyncTxt()}</div></div></div>
+ <div style="height:12px"></div><button class="btn s" onclick="syncNow(true)">Sync now</button><div style="height:8px"></div><button class="btn out" onclick="signOut()">Sign out</button>`:
+ cfg?`<div class="mute">Sign in to sync trades across your phones.</div><div class="authbox"><button class="btn ggl" onclick="signInGoogle()"><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="">Continue with Google</button>
+ <button class="btn s" onclick="emailSheet(false)">Email & password</button></div>`:
+ `<div class="mute">Cloud sync is not set up yet. The host needs to add Firebase keys (SETUP.md). You can still use this phone offline.</div>`}</div>
+ <div class="card"><h3>Appearance</h3><div class="seg">${["auto","light","dark"].map(t=>`<button class="${(S.theme||"auto")===t?"on":""}" onclick="S.theme='${t}';persist();render()">${t[0].toUpperCase()+t.slice(1)}</button>`).join("")}</div></div><div class="card"><h3>Profile</h3><label>Your name</label><input id="sName" value="${esc(S.name||'')}"><label>Local currency</label><button class="btn s" style="text-align:left;display:flex;justify-content:space-between" onclick="curPick(c=>{S.cur=c;S.fx=null;persist();liveFx(true).then(render);render()})"><span>${curLbl(CUR())}</span><span>Change ›</span></button>
  ${isUSD()?'':`<label>Default USD/${CUR()} rate (${CUR()} per $1), used when a trade has no rate</label><input id="sFx" type="number" step="any" inputmode="decimal" value="${S.fx||''}">${S.liveRate?`<div class="row mute" style="margin-top:6px"><span>Live rate: ${S.liveRate.toFixed(4)}</span><button class="lnk" onclick="$('sFx').value=S.liveRate">Use live rate</button></div>`:''}`}
  <div style="height:12px"></div><button class="btn" onclick="const n=$('sName').value.trim();if(n)S.name=n;if($('sFx'))S.fx=+$('sFx').value||S.fx;persist();render();alert('Saved')">Save</button></div>
- <div class="card"><h3>Backup</h3><div class="mute">Your data lives only on this phone. Export a backup now and then.</div><div style="height:12px"></div><button class="btn s" onclick="exp()">Export backup (JSON)</button><div style="height:8px"></div><button class="btn s" onclick="$('imp').click()">Import backup</button><input id="imp" type="file" accept=".json,application/json" style="display:none" onchange="impF(this)"><div style="height:8px"></div><button class="btn s" onclick="refresh(true)">Refresh prices now</button></div>
+ <div class="card"><h3>Backup</h3><div class="mute">Export a backup now and then. With cloud sync on, your trades also live in your account.</div><div style="height:12px"></div><button class="btn s" onclick="exp()">Export backup (JSON)</button><div style="height:8px"></div><button class="btn s" onclick="$('imp').click()">Import backup</button><input id="imp" type="file" accept=".json,application/json" style="display:none" onchange="impF(this)"><div style="height:8px"></div><button class="btn s" onclick="refresh(true)">Refresh prices now</button></div>
  <div class="mute" style="text-align:center">${S.trades.length} trades saved on this phone</div>`}
 function render(){theme();greet();navR();$('view').innerHTML=tab==='dash'?dash():tab==='assets'?assets():settings()}
 function closeS(){$('sheet').classList.remove('on')}
@@ -112,7 +191,7 @@ function openForm(id){const e=id?S.trades.find(t=>t.id===id):null;$('sheetIn').i
  <button class="btn" onclick="save('${e?e.id:''}')">${e?'Save changes':'Save trade'}</button>${e?`<div style="height:8px"></div><button class="btn d" onclick="del('${e.id}')">Delete trade</button>`:''}`;$('sheet').classList.add('on');calcG()}
 function calcG(){const q=+$('fQty').value,p=+$('fPx').value,u=(q>0&&p>=0)?q*p:0,rEl=$('fRate'),r=rEl?+rEl.value:0;const t=$('totOut');if(t)t.textContent=(q>0&&$('fPx').value!=='')?'Total '+(segV('sSide')==='Sell'?'received':'paid')+': '+usd(u):'';const o=$('gOut');if(!o)return;o.textContent=isUSD()||!u?'':(r?CUR()+' cost: '+ghs(u*r):CUR()+' cost (default rate '+FX()+'): '+ghs(u*FX()))}
 function save(id){const sym=$('fSym').value.trim().toUpperCase(),qty=+$('fQty').value,px=+$('fPx').value,u=qty*px,r=isUSD()?null:(+$('fRate').value||null);if(!sym||!(qty>0)||$('fPx').value===''||!(px>=0)){alert('Fill in symbol, amount and cost price');return}
- const e=id?S.trades.find(t=>t.id===id):null;const t={id:e?e.id:Date.now()+''+Math.random().toString(36).slice(2,6),t:e?e.t:Date.now(),side:segV('sSide'),sym,type:segV('sType'),qty,px,usd:u,rate:r,date:$('fDate').value||ds(Date.now()),note:$('fNote').value.trim()};
+ const e=id?S.trades.find(t=>t.id===id):null;const t={id:e?e.id:Date.now()+''+Math.random().toString(36).slice(2,6),t:e?e.t:Date.now(),side:segV('sSide'),sym,type:segV('sType'),qty,px,usd:u,rate:r,date:$('fDate').value||ds(Date.now()),note:$('fNote').value.trim(),updatedAt:Date.now()};
  if(t.side==='Sell'){const h=holdings().find(h=>h.sym===sym);const have=(h?h.qty:0)+(e&&e.side==='Sell'&&e.sym===sym?e.qty:0)-(e&&e.side==='Buy'&&e.sym===sym?e.qty:0);if(qty>have+1e-12&&!confirm('You only hold '+qf(have)+' '+sym+'. Save anyway?'))return}
  if(e)Object.assign(e,t);else S.trades.push(t);persist();closeS();refresh();render()}
 function del(id){if(!confirm('Delete this trade?'))return;S.trades=S.trades.filter(t=>t.id!==id);persist();closeS();render()}
@@ -134,13 +213,20 @@ function curList(q,sel){q=(q||'').toLowerCase();return CURS.filter(c=>!q||(c[0]+
 let _pc=null,_sel=null;
 function curPick(cb){_pc=cb;_sel=CUR();$('sheetIn').innerHTML=`<div class="row"><h3 style="margin:0">Local currency</h3><button class="lnk" onclick="closeS()">Close</button></div><input id="cq" placeholder="Search currency…" style="margin:12px 0" oninput="$('cl').innerHTML=curList(this.value,_sel)"><div class="card" id="cl" style="padding:6px 10px">${curList('',_sel)}</div>`;$('sheet').classList.add('on')}
 function pickC(c){_sel=c;if(_pc){const f=_pc;_pc=null;closeS();f(c)}else{document.querySelectorAll('#obl .curi').forEach(b=>{b.classList.toggle('on',b.querySelector('b').textContent===c)});$('obl').innerHTML=curList($('obq').value,c)}}
-function onboard(){const needCur=!S.cur;_sel=_sel||'GHS';const o=$('ob');o.style.display='block';
- o.innerHTML=`<div class="obw"><div class="oblogo">📈</div><h1>Welcome to<br>Trade Log</h1><p class="mute">Your private trade journal. Log buys and sells, see your average cost and live value. Everything stays on this phone.</p>
- <div class="card"><label style="margin-top:0">What should we call you?</label><input id="obn" placeholder="Your name" autocomplete="given-name" value="${esc(S.name||'')}">
- ${needCur?`<label>Your local currency</label><input id="obq" placeholder="Search e.g. GHS, Naira, Euro…" oninput="$('obl').innerHTML=curList(this.value,_sel)"><div id="obl" class="obl">${curList('',_sel)}</div><div class="mute" style="margin-top:8px">Trades are logged in US dollars. Your local currency is used to track what you paid in your own money.</div>`:`<div class="mute" style="margin-top:10px">Your trades and rates are safe. Currency: ${curLbl(CUR())}</div>`}</div>
- <button class="btn" onclick="obDone()">Get started →</button></div>`;setTimeout(()=>$('obn').focus(),300)}
+function emailSheet(isNew){$('sheetIn').innerHTML=`<div class="row"><h3 style="margin:0">${isNew?'Create account':'Email sign-in'}</h3><button class="lnk" onclick="closeS()">Close</button></div>
+ <div class="card" style="margin-top:12px"><label>Email</label><input id="em" type="email" autocomplete="email"><label>Password</label><input id="pw" type="password"><div style="height:12px"></div>
+ <button class="btn" onclick="signInEmail($('em').value.trim(),$('pw').value,!!isNew).then(()=>closeS())">${isNew?'Create account':'Sign in'}</button>
+ <div style="height:8px"></div><button class="btn s" onclick="emailSheet(!isNew)">${isNew?'Have an account? Sign in':'Need an account? Create one'}</button></div>`;$('sheet').classList.add('on')}
+function onboard(){const needCur=!S.cur;_sel=_sel||'GHS';const o=$('ob');o.style.display='block';const cfg=fbOk();
+ const guestForm=`<div class="card"><label style="margin-top:0">What should we call you?</label><input id="obn" placeholder="Your name" autocomplete="given-name" value="${esc(S.name||'')}">
+ ${needCur?`<label>Your local currency</label><input id="obq" placeholder="Search e.g. GHS, Naira, Euro…" oninput="$('obl').innerHTML=curList(this.value,_sel)"><div id="obl" class="obl">${curList('',_sel)}</div><div class="mute" style="margin-top:8px">Trades are logged in US dollars. Your local currency tracks what you paid in your own money.</div>`:`<div class="mute" style="margin-top:10px">Your trades and rates are safe. Currency: ${curLbl(CUR())}</div>`}</div>
+ <button class="btn" onclick="obDone()">${cfg?'Continue as guest →':'Get started →'}</button>`;
+ o.innerHTML=`<div class="obw"><div class="oblogo">📈</div><h1>Welcome to<br>Trade Log</h1><p class="mute">Your private trade journal. Log buys and sells, see average cost and live value.</p>
+ ${cfg?`<div class="choice"><button class="btn ggl" onclick="signInGoogle()"><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="">Continue with Google</button>
+ <button class="btn s" onclick="emailSheet(false)">Email & password</button><div class="mute" style="text-align:center;margin:6px 0">or continue as guest</div></div>${guestForm}`:guestForm}</div>`;
+ if($('obn'))setTimeout(()=>$('obn').focus(),300)}
 async function obDone(){const n=$('obn').value.trim();if(!n){$('obn').focus();$('obn').style.borderColor='var(--r)';return}S.name=n;if(!S.cur){S.cur=_sel||'USD';S.fx=null}persist();$('ob').style.display='none';render();await liveFx(false);render()}
 
-render();if(!S.name||!S.cur)onboard();else if(!S.fx||!isUSD())liveFx(false).then(render);refresh();setInterval(()=>{if(!document.hidden)refresh()},60000);setInterval(greet,60000);matchMedia('(prefers-color-scheme: dark)').addEventListener('change',theme);
+initFb();watchAuth();render();if(!_user&&(!S.name||!S.cur))onboard();else if(S.name&&S.cur&&(!S.fx||!isUSD()))liveFx(false).then(render);refresh();setInterval(()=>{if(!document.hidden)refresh()},60000);setInterval(greet,60000);matchMedia('(prefers-color-scheme: dark)').addEventListener('change',theme);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script></body></html>
