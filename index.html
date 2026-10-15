@@ -46,6 +46,20 @@ nav button{flex:1;min-width:0;border:0;background:none;border-radius:20px;paddin
 .acct{display:flex;align-items:center;gap:12px}.acct .av2{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;display:grid;place-items:center;font-weight:800;flex:none}
 .syncok{color:var(--g);font-size:12px;font-weight:600}.syncwarn{color:var(--mute);font-size:12px}
 .choice{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.txtshare{display:flex;justify-content:center;gap:4px;margin-top:2px}.txtshare button{background:none;border:0;color:var(--mute);font:inherit;font-size:13px;font-weight:600;padding:8px 12px}
+.sheet .in.pic{background:#0c0e16;color:#eef0fa}.sheet .in.pic h3{color:#eef0fa;font-size:16px}.sheet .in.pic .lnk{color:#c4b5fd}
+.picpreview{display:flex;justify-content:center;margin:14px 0 2px}
+.picpreview canvas,.picpreview img,#shareSave img{width:min(230px,64vw);height:calc(min(230px,64vw) * 16 / 9);border-radius:20px;display:block;box-shadow:0 16px 40px rgba(0,0,0,.45);background:#111}
+.bgrow{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 14px}
+.bgchip{border:1px solid #2a2e42;background:#141824;color:#b7bdd2;border-radius:14px;padding:8px 2px 7px;font:inherit;font-size:11px;font-weight:700;line-height:1.15;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center}
+.bgchip.on{border-color:#a78bfa;color:#fff;background:#1c1730}
+.swatch{width:42px;height:32px;border-radius:8px;display:block}
+.swatch.p{background:radial-gradient(120% 80% at 100% 0%,#ec4899,transparent 58%),linear-gradient(135deg,#4c1d95,#2563eb)}
+.swatch.d{background:linear-gradient(#1c2030,#07080d)}
+.swatch.s{background:linear-gradient(165deg,#7c2d12,#ea580c 60%,#fb7185)}
+.swatch.ph{background:#10131c;box-shadow:inset 0 0 0 1.5px #6b7088}
+.hint{color:#8b90a8;font-size:12px;text-align:center;margin:8px 0 10px}
+#shareSave .btn{display:block;text-align:center;text-decoration:none}
 
 </style></head><body><div class="wrap">
 <header><div><div class="d" id="hDate"></div><h1 id="hi"></h1></div><button class="av" id="av" onclick="tab='set';render()"></button></header>
@@ -167,9 +181,12 @@ function summaryData(){const kind=sumPer==='Month'||sumPer==='Year'?sumPer:'Week
  const buys=trades.filter(t=>t.side==='Buy'),sells=trades.filter(t=>t.side==='Sell');
  const spent=buys.reduce((s,t)=>s+(+t.usd||0),0);
  const spentLocal=buys.reduce((s,t)=>s+(+t.usd||0)*(t.rate||FX()),0);
- const assets={};buys.forEach(t=>{if(!t.sym)return;assets[t.sym]=(assets[t.sym]||0)+(+t.qty||0)});
+ const bag={};
+ buys.forEach(t=>{if(!t.sym)return;const row=bag[t.sym]||(bag[t.sym]={sym:t.sym,qty:0,usd:0,local:0});row.qty+=+t.qty||0;row.usd+=+t.usd||0;row.local+=(+t.usd||0)*(t.rate||FX())});
+ const assets={};Object.keys(bag).forEach(s=>{assets[s]=bag[s].qty});
+ const top=Object.values(bag).sort((p,q)=>q.usd-p.usd||p.sym.localeCompare(q.sym));
  const T=totals();const fx=FX();const pnl=T.pnl;
- return{kind,a,b,buys:buys.length,sells:sells.length,spent,spentLocal,assets,T,fx,localCost:T.c*fx,localVal:T.v*fx,localPnl:pnl*fx,pnl,pp:T.c?pnl/T.c*100:0}}
+ return{kind,a,b,buys:buys.length,sells:sells.length,spent,spentLocal,assets,top,T,fx,localCost:T.c*fx,localVal:T.v*fx,localPnl:pnl*fx,pnl,pp:T.c?pnl/T.c*100:0}}
 function sumAdj(){return sumPer==='Month'?'monthly':sumPer==='Year'?'yearly':'weekly'}
 function summarySubject(){return 'Trade Log '+sumAdj()+' summary'}
 function summaryText(){const D=summaryData();const syms=Object.keys(D.assets).sort();
@@ -184,7 +201,40 @@ function waUrl(){return 'https://wa.me/?text='+encodeURIComponent(summaryText())
 function mailUrl(){const e=(_user&&_user.email)||'';return 'mailto:'+e+'?subject='+encodeURIComponent(summarySubject())+'&body='+encodeURIComponent(summaryText())}
 function shareWa(){window.open(waUrl(),'_blank','noopener')}
 function shareMail(){location.href=mailUrl()}
-function shareNative(){if(navigator.share)navigator.share({title:summarySubject(),text:summaryText()}).catch(()=>{})}
+let shareBg='purple',sharePhoto=null,sharePhotoUrl='',shareBlobUrl='';
+const CARD_FONT='-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif';
+function cfont(ctx,w,s){ctx.font=w+' '+s+'px '+CARD_FONT}
+function fitSize(ctx,text,max,w,s,min){let z=s;cfont(ctx,w,z);while(z>min&&ctx.measureText(text).width>max){z-=2;cfont(ctx,w,z)}return z}
+function rr(ctx,x,y,w,h,r){const rad=Math.max(0,Math.min(r,w/2,h/2));ctx.beginPath();ctx.moveTo(x+rad,y);ctx.arcTo(x+w,y,x+w,y+h,rad);ctx.arcTo(x+w,y+h,x,y+h,rad);ctx.arcTo(x,y+h,x,y,rad);ctx.arcTo(x,y,x+w,y,rad);ctx.closePath()}
+function textShadow(ctx){ctx.shadowColor=shareBg==='photo'?'rgba(0,0,0,.55)':'rgba(0,0,0,.28)';ctx.shadowBlur=shareBg==='photo'?16:8;ctx.shadowOffsetY=2}
+function noShadow(ctx){ctx.shadowColor='transparent';ctx.shadowBlur=0;ctx.shadowOffsetY=0}
+function periodPhrase(D){const pa=String(D.a).split('-').map(Number),pb=String(D.b).split('-').map(Number);const da=new Date(pa[0],(pa[1]||1)-1,pa[2]||1),db=new Date(pb[0],(pb[1]||1)-1,pb[2]||1);const mon=d=>d.toLocaleDateString('en-GB',{month:'short'});if(D.kind==='Month')return 'This month · '+da.toLocaleDateString('en-GB',{month:'long'});if(D.kind==='Year')return 'This year · '+da.getFullYear();const range=(da.getMonth()===db.getMonth()&&da.getFullYear()===db.getFullYear())?(da.getDate()+'–'+db.getDate()+' '+mon(db)):(da.getDate()+' '+mon(da)+' – '+db.getDate()+' '+mon(db));return 'This week · '+range}
+function plusMoney(v,local){const t=(local&&!isUSD())?ghs(v):usd(v);return v<0?t:'+'+t}
+function drawPurpleBg(ctx,w,h){const g=ctx.createLinearGradient(0,0,w,h);g.addColorStop(0,'#4c1d95');g.addColorStop(0.45,'#6d28d9');g.addColorStop(1,'#2563eb');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);const r=ctx.createRadialGradient(w,0,0,w,0,w*0.95);r.addColorStop(0,'rgba(236,72,153,.88)');r.addColorStop(0.55,'rgba(236,72,153,0)');ctx.fillStyle=r;ctx.fillRect(0,0,w,h);ctx.beginPath();ctx.arc(w+80,h-40,340,0,Math.PI*2);ctx.strokeStyle='rgba(255,255,255,.08)';ctx.lineWidth=80;ctx.stroke()}
+function drawDarkBg(ctx,w,h){const g=ctx.createLinearGradient(0,0,0,h);g.addColorStop(0,'#161824');g.addColorStop(1,'#07080d');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);const r=ctx.createRadialGradient(w*0.85,0,0,w*0.85,0,w*0.5);r.addColorStop(0,'rgba(124,58,237,.16)');r.addColorStop(1,'rgba(124,58,237,0)');ctx.fillStyle=r;ctx.fillRect(0,0,w,h)}
+function drawSunsetBg(ctx,w,h){const g=ctx.createLinearGradient(0,0,w*0.15,h);g.addColorStop(0,'#7c2d12');g.addColorStop(0.4,'#c2410c');g.addColorStop(0.72,'#ea580c');g.addColorStop(1,'#fb7185');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);const r=ctx.createRadialGradient(w*1.02,h*0.96,8,w*0.92,h*0.96,w*0.5);r.addColorStop(0,'rgba(254,240,138,.92)');r.addColorStop(0.28,'rgba(251,146,60,.4)');r.addColorStop(1,'rgba(251,146,60,0)');ctx.fillStyle=r;ctx.fillRect(0,0,w,h)}
+function drawPhotoBg(ctx,img,w,h){const ir=img.width/img.height,cr=w/h;let sx=0,sy=0,sw=img.width,sh=img.height;if(ir>cr){sh=img.height;sw=sh*cr;sx=(img.width-sw)/2}else{sw=img.width;sh=sw/cr;sy=(img.height-sh)/2}ctx.drawImage(img,sx,sy,sw,sh,0,0,w,h);const og=ctx.createLinearGradient(0,0,0,h);og.addColorStop(0,'rgba(6,8,16,.62)');og.addColorStop(0.42,'rgba(6,8,16,.5)');og.addColorStop(1,'rgba(6,8,16,.74)');ctx.fillStyle=og;ctx.fillRect(0,0,w,h)}
+function kicker(ctx,text,x,y){ctx.letterSpacing='3px';cfont(ctx,'700',24);ctx.fillStyle='rgba(255,255,255,.64)';ctx.fillText(text,x,y);ctx.letterSpacing='0px'}
+function drawShareCard(){const cv=$('shareCv');if(!cv)return;const ctx=cv.getContext('2d');const w=cv.width,h=cv.height;ctx.clearRect(0,0,w,h);ctx.textBaseline='top';ctx.textAlign='left';noShadow(ctx);ctx.letterSpacing='0px';if(shareBg==='photo'&&sharePhoto&&sharePhoto.width)drawPhotoBg(ctx,sharePhoto,w,h);else if(shareBg==='dark')drawDarkBg(ctx,w,h);else if(shareBg==='sunset')drawSunsetBg(ctx,w,h);else drawPurpleBg(ctx,w,h);
+ const D=summaryData();const x=96,right=w-96,maxW=right-x;const valN=isUSD()?D.T.v:D.localVal;const pnlN=isUSD()?D.pnl:D.localPnl;const valTxt=isUSD()?usd(valN):ghs(valN);const pnlTxt=plusMoney(pnlN,true);const pctTxt=pct(D.pp);const good=pnlN>=0;const phrase=periodPhrase(D);const top=(D.top||[]).slice(0,3);const spentMain=isUSD()?usd(D.spent):ghs(D.spentLocal);
+ textShadow(ctx);let y=188;ctx.letterSpacing='3px';cfont(ctx,'700',32);ctx.fillStyle='rgba(255,255,255,.82)';ctx.fillText('Trade Log',x,y);ctx.letterSpacing='0px';
+ y+=80;const ps=fitSize(ctx,phrase,maxW,'600',48,32);cfont(ctx,'600',ps);ctx.fillStyle='#fff';ctx.fillText(phrase,x,y);
+ y+=ps+112;kicker(ctx,'CURRENT VALUE',x,y);y+=50;const vs=fitSize(ctx,valTxt,maxW,'800',100,54);cfont(ctx,'800',vs);ctx.fillStyle='#fff';ctx.fillText(valTxt,x,y);
+ y+=vs+34;const combo=pnlTxt+'    '+pctTxt;const pnlSize=fitSize(ctx,combo,maxW-64,'700',40,26);cfont(ctx,'700',pnlSize);const tw=ctx.measureText(combo).width;const ph=pnlSize+34,pw=Math.min(maxW,tw+52);noShadow(ctx);rr(ctx,x,y,pw,ph,ph/2);ctx.fillStyle=good?'rgba(74,222,128,.18)':'rgba(251,113,133,.2)';ctx.fill();textShadow(ctx);ctx.fillStyle=good?'#4ade80':'#fb7185';ctx.fillText(combo,x+26,y+15);
+ y+=ph+96;noShadow(ctx);ctx.fillStyle='rgba(255,255,255,.3)';rr(ctx,x,y,140,6,3);ctx.fill();textShadow(ctx);
+ y+=46;kicker(ctx,D.kind==='Month'?'SPENT THIS MONTH':D.kind==='Year'?'SPENT THIS YEAR':'SPENT THIS WEEK',x,y);y+=46;const ss=fitSize(ctx,spentMain,maxW,'800',58,34);cfont(ctx,'800',ss);ctx.fillStyle='#fff';ctx.fillText(spentMain,x,y);y+=ss+12;if(!isUSD()){cfont(ctx,'500',30);ctx.fillStyle='rgba(255,255,255,.72)';ctx.fillText(usd(D.spent),x,y);y+=44}else y+=28;
+ y+=36;kicker(ctx,'BUYS',x,y);y+=44;cfont(ctx,'800',76);ctx.fillStyle='#fff';ctx.fillText(String(D.buys),x,y);
+ y+=76+68;kicker(ctx,'TOP ASSETS',x,y);y+=50;
+ if(!top.length){cfont(ctx,'500',36);ctx.fillStyle='rgba(255,255,255,.78)';ctx.fillText('No buys this period',x,y)}
+ else top.forEach((a,i)=>{cfont(ctx,'700',26);ctx.fillStyle='rgba(255,255,255,.46)';ctx.fillText(String(i+1).padStart(2,'0'),x,y+14);const amt=isUSD()?usd(a.usd):ghs(a.local);cfont(ctx,'600',32);const aw=Math.min(ctx.measureText(amt).width,maxW*0.48);ctx.fillStyle='rgba(255,255,255,.9)';ctx.fillText(amt,right-ctx.measureText(amt).width,y+12);const ns=fitSize(ctx,a.sym,Math.max(80,maxW-aw-100),'700',46,26);cfont(ctx,'700',ns);ctx.fillStyle='#fff';ctx.fillText(a.sym,x+70,y);y+=104});
+ noShadow(ctx);ctx.letterSpacing='0px'}
+function openSharePic(){if(shareBlobUrl){URL.revokeObjectURL(shareBlobUrl);shareBlobUrl=''}const chip=(k,name,sw,act)=>'<button type="button" class="bgchip'+(shareBg===k?' on':'')+'" data-bg="'+k+'" onclick="'+act+'"><i class="swatch '+sw+'"></i>'+name+'</button>';$('sheetIn').className='in pic';$('sheetIn').innerHTML='<div class="row"><h3 style="margin:0">Share as picture</h3><button class="lnk" type="button" onclick="closeS()">Close</button></div><div class="picpreview" id="picPrev"><canvas id="shareCv" width="1080" height="1920" aria-label="Summary card preview"></canvas></div><div class="bgrow">'+chip('purple','Purple','p',"setShareBg('purple')")+chip('dark','Dark','d',"setShareBg('dark')")+chip('sunset','Sunset','s',"setShareBg('sunset')")+chip('photo','Your photo','ph','pickSharePhoto()')+'</div><input id="shareFile" type="file" accept="image/*" hidden onchange="sharePhotoPick(this)"><button class="btn" type="button" id="shareGo" onclick="doSharePic()">Share</button><div id="shareSave"></div>';$('sheet').classList.add('on');drawShareCard()}
+function setShareBg(k){if(k!=='purple'&&k!=='dark'&&k!=='sunset'&&k!=='photo')return;if(k==='photo'&&!sharePhoto){pickSharePhoto();return}shareBg=k;document.querySelectorAll('.bgchip').forEach(b=>b.classList.toggle('on',b.getAttribute('data-bg')===k));const prev=$('picPrev');if(prev&&!$('shareCv'))prev.innerHTML='<canvas id="shareCv" width="1080" height="1920" aria-label="Summary card preview"></canvas>';const go=$('shareGo');if(go)go.style.display='';const save=$('shareSave');if(save)save.innerHTML='';drawShareCard()}
+function pickSharePhoto(){const f=$('shareFile');if(f)f.click()}
+function sharePhotoPick(inp){const f=inp.files&&inp.files[0];if(!f)return;const url=URL.createObjectURL(f);const img=new Image();img.onload=function(){if(sharePhotoUrl)URL.revokeObjectURL(sharePhotoUrl);sharePhotoUrl=url;sharePhoto=img;setShareBg('photo')};img.onerror=function(){URL.revokeObjectURL(url)};img.src=url;inp.value=''}
+function sharePngBlob(cv){const data=cv.toDataURL('image/png');const b=atob(data.slice(data.indexOf(',')+1));const u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return new Blob([u],{type:'image/png'})}
+function showShareSave(blob){if(shareBlobUrl)URL.revokeObjectURL(shareBlobUrl);shareBlobUrl=URL.createObjectURL(blob);const prev=$('picPrev');if(prev)prev.innerHTML='<img id="shareImg" alt="Trade Log summary" src="'+shareBlobUrl+'">';const save=$('shareSave');if(save)save.innerHTML='<p class="hint">Long-press the picture to save it.</p><a class="btn" href="'+shareBlobUrl+'" download="trade-log-summary.png">Save</a>';const go=$('shareGo');if(go)go.style.display='none'}
+function doSharePic(){const cv=$('shareCv');if(!cv)return;let blob;try{blob=sharePngBlob(cv)}catch(e){const save=$('shareSave');if(save)save.innerHTML='<p class="hint">Could not make the image from that photo. Try another background.</p>';return}const file=new File([blob],'trade-log-summary.png',{type:'image/png'});let can=false;try{can=!!(navigator.canShare&&navigator.canShare({files:[file]}))}catch(e){can=false}if(can){try{const p=navigator.share({files:[file]});if(p&&typeof p.then==='function')p.catch(function(e){if(!e||e.name!=='AbortError')showShareSave(blob)});else showShareSave(blob)}catch(e){showShareSave(blob)}return}showShareSave(blob)}
 function summaryCard(){const D=summaryData();const syms=Object.keys(D.assets).sort();
  const seg=['Week','Month','Year'].map(k=>`<button type="button" class="${sumPer===k?'on':''}" onclick="setSum('${k}')">${k}</button>`).join('');
  const loc=v=>isUSD()?'':'<div class="mute" style="font-weight:600">'+ghs(v)+'</div>';
@@ -200,9 +250,8 @@ function summaryCard(){const D=summaryData();const syms=Object.keys(D.assets).so
  <div class="row" style="padding:3px 0"><span class="mute">Total cost</span><b style="text-align:right">${usd(D.T.c)}${loc(D.localCost)}</b></div>
  <div class="row" style="padding:3px 0"><span class="mute">Value</span><b style="text-align:right">${usd(D.T.v)}${loc(D.localVal)}</b></div>
  <div class="row" style="padding:3px 0"><span class="mute">P&L</span><b class="${cls(D.pnl)}" style="text-align:right">${sg(D.pnl)}${usd(D.pnl)} (${pct(D.pp)})${isUSD()?'':'<div class="'+cls(D.pnl)+'" style="font-weight:700">'+sg(D.pnl)+ghs(D.localPnl)+'</div>'}</b></div>
- <div style="height:12px"></div><button class="btn s" type="button" onclick="shareWa()">Share on WhatsApp</button>
- <div style="height:8px"></div><button class="btn s" type="button" onclick="shareMail()">Email</button>
- ${navigator.share?'<div style="height:8px"></div><button class="btn s" type="button" onclick="shareNative()">Share</button>':''}</div>`}
+ <div style="height:14px"></div><button class="btn" type="button" onclick="openSharePic()">Share as picture</button>
+ <div class="txtshare"><button type="button" onclick="shareWa()">WhatsApp</button><button type="button" onclick="shareMail()">Email</button></div></div>`}
 function dash(){const T=totals();const d24=T.H.reduce((a,h)=>{const p=S.prices[h.sym];return a+(p&&p.chg&&!p.manual?h.value-h.value/(1+p.chg/100):0)},0);
  return`<div class="hero"><div class="l">Net worth</div><div class="big">${usd(T.v)}</div><div class="sub">${isUSD()?'':'≈ '+ghs(T.v*FX())+' · '}<span class="pill">${sg(d24)}${usd(d24)} 24h</span></div>
  <div class="hstats"><div><small>Profit / loss</small><b>${sg(T.pnl)}${usd(T.pnl)}</b><small>${pct(T.c?T.pnl/T.c*100:0)}</small></div><div><small>Invested</small><b>${usd(T.c)}</b><small>Realized ${sg(T.re)}${usd(T.re)}</small></div></div></div>
@@ -226,7 +275,7 @@ function settings(){const cfg=fbOk();const u=_user;return`<div class="sec">Setti
  <div class="card"><h3>Backup</h3><div class="mute">Export a backup now and then. With cloud sync on, your trades also live in your account.</div><div style="height:12px"></div><button class="btn s" onclick="exp()">Export backup (JSON)</button><div style="height:8px"></div><button class="btn s" onclick="$('imp').click()">Import backup</button><input id="imp" type="file" accept=".json,application/json" style="display:none" onchange="impF(this)"><div style="height:8px"></div><button class="btn s" onclick="refresh(true)">Refresh prices now</button></div>
  <div class="mute" style="text-align:center">${S.trades.length} trades saved on this phone</div>`}
 function render(){theme();greet();navR();$('view').innerHTML=tab==='dash'?dash():tab==='assets'?assets():tab==='sum'?summaryCard():settings()}
-function closeS(){$('sheet').classList.remove('on')}
+function closeS(){$('sheet').classList.remove('on');const box=$('sheetIn');if(box)box.classList.remove('pic')}
 function segH(id,opts,v){return`<div class="seg" id="${id}">${opts.map(o=>`<button type="button" class="${o===v?'on':''}" onclick="[...this.parentNode.children].forEach(b=>b.classList.remove('on'));this.classList.add('on');calcG()">${o}</button>`).join('')}</div>`}
 const segV=id=>$(id).querySelector('.on').textContent;
 function openForm(id){const e=id?S.trades.find(t=>t.id===id):null;$('sheetIn').innerHTML=`<div class="row"><h3 style="margin:0">${e?'Edit trade':'Add trade'}</h3><button class="lnk" onclick="closeS()">Close</button></div>
