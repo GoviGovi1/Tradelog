@@ -28,6 +28,7 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == uid;
       }
     }
+    match /visits/{visitId} { allow create: if request.resource.data.keys().hasOnly(['ts','day','vid','signedIn']) && request.resource.data.ts == request.time && request.resource.data.day is string && request.resource.data.day.size() == 10 && request.resource.data.vid is string && request.resource.data.vid.size() <= 64 && request.resource.data.signedIn is bool; allow read, update, delete: if false; }
   }
 }
 ```

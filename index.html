@@ -82,7 +82,7 @@ function migrate(){ // v1 -> v2: everything stored in USD, optional rate (GHS pe
  for(const s in S.prices){const p=S.prices[s];if(p&&p.cur==='GHS'){p.v=p.v/fx;p.cur='USD'}}
  }if(S.trades.length&&!S.cur)S.cur='GHS';S.v=4;delete S.disp;delete S.snaps;persist()}
 const persist=()=>{S.updatedAt=Date.now();localStorage.setItem(K,JSON.stringify(S));scheduleSync()};
-let _syncT=null,_syncing=false,_user=null,_fb=null;
+let _syncT=null,_syncing=false,_user=null,_fb=null,_visitOnce=false;
 function fbOk(){return typeof firebaseConfigured==='function'&&firebaseConfigured()&&typeof firebase!=='undefined'}
 function initFb(){if(_fb)return _fb;if(!fbOk())return null;try{if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);_fb={auth:firebase.auth(),db:firebase.firestore()};return _fb}catch(e){console.warn('Firebase init',e);return null}}
 function scheduleSync(){if(!_user)return;clearTimeout(_syncT);_syncT=setTimeout(()=>syncNow(false),1200)}
@@ -141,7 +141,14 @@ async function signInEmail(email,pass,isNew){const fb=initFb();if(!fb){alert('Cl
   try{if(isNew)await fb.auth.createUserWithEmailAndPassword(email,pass);else await fb.auth.signInWithEmailAndPassword(email,pass)}catch(e){alert(e.message||'Sign-in failed')}}
 async function signOut(){const fb=initFb();if(fb)await fb.auth.signOut();_user=null;render()}
 function watchAuth(){if(!fbOk())return;const fb=initFb();if(!fb)return;
-  fb.auth.onAuthStateChanged(async u=>{_user=u||null;if(u){if(!S.name&&u.displayName){S.name=u.displayName.split(' ')[0];localStorage.setItem(K,JSON.stringify(S))}
+  fb.auth.onAuthStateChanged(async u=>{_user=u||null;
+    if(!_visitOnce){_visitOnce=true;try{
+      let vid=localStorage.getItem('tl_vid');
+      if(!vid){try{vid=crypto.randomUUID()}catch(e){vid=Date.now().toString(36)+Math.random().toString(36).slice(2)}localStorage.setItem('tl_vid',vid)}
+      const day=ds(new Date());
+      fb.db.collection('visits').add({ts:firebase.firestore.FieldValue.serverTimestamp(),day,vid,signedIn:!!u}).catch(()=>{});
+    }catch(e){}}
+    if(u){if(!S.name&&u.displayName){S.name=u.displayName.split(' ')[0];localStorage.setItem(K,JSON.stringify(S))}
     await syncNow(false);if(!S.cur||!S.name)onboard();else if($('ob'))$('ob').style.display='none';render()}else render()})}
 
 migrate();
