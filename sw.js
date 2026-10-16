@@ -1,4 +1,4 @@
-const C='tl-v15';
+const C='tl-v16';
 const SHELL=['./','./index.html','./manifest.json','./icon.png','./firebase-config.js'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(SHELL)))});
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x))))));

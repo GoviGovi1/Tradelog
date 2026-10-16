@@ -140,15 +140,14 @@ async function signInGoogle(){const fb=initFb();if(!fb){alert('Cloud sync is not
 async function signInEmail(email,pass,isNew){const fb=initFb();if(!fb){alert('Cloud sync is not set up yet.');return}
   try{if(isNew)await fb.auth.createUserWithEmailAndPassword(email,pass);else await fb.auth.signInWithEmailAndPassword(email,pass)}catch(e){alert(e.message||'Sign-in failed')}}
 async function signOut(){const fb=initFb();if(fb)await fb.auth.signOut();_user=null;render()}
+function logVisit(user){if(_visitOnce)return;const fb=initFb();if(!fb)return;_visitOnce=true;try{
+  let vid=localStorage.getItem('tl_vid');
+  if(!vid){try{vid=crypto.randomUUID()}catch(e){vid=Date.now().toString(36)+Math.random().toString(36).slice(2)}localStorage.setItem('tl_vid',vid)}
+  const day=ds(new Date());
+  fb.db.collection('visits').add({ts:firebase.firestore.FieldValue.serverTimestamp(),day,vid,signedIn:!!user}).catch(e=>console.warn('visit',e));
+}catch(e){console.warn('visit',e)}}
 function watchAuth(){if(!fbOk())return;const fb=initFb();if(!fb)return;
-  fb.auth.onAuthStateChanged(async u=>{_user=u||null;
-    if(!_visitOnce){_visitOnce=true;try{
-      let vid=localStorage.getItem('tl_vid');
-      if(!vid){try{vid=crypto.randomUUID()}catch(e){vid=Date.now().toString(36)+Math.random().toString(36).slice(2)}localStorage.setItem('tl_vid',vid)}
-      const day=ds(new Date());
-      fb.db.collection('visits').add({ts:firebase.firestore.FieldValue.serverTimestamp(),day,vid,signedIn:!!u}).catch(()=>{});
-    }catch(e){}}
-    if(u){if(!S.name&&u.displayName){S.name=u.displayName.split(' ')[0];localStorage.setItem(K,JSON.stringify(S))}
+  fb.auth.onAuthStateChanged(async u=>{_user=u||null;logVisit(u);if(u){if(!S.name&&u.displayName){S.name=u.displayName.split(' ')[0];localStorage.setItem(K,JSON.stringify(S))}
     await syncNow(false);if(!S.cur||!S.name)onboard();else if($('ob'))$('ob').style.display='none';render()}else render()})}
 
 migrate();
@@ -333,6 +332,6 @@ function onboard(){const needCur=!S.cur;_sel=_sel||'GHS';const o=$('ob');o.style
  if($('obn'))setTimeout(()=>$('obn').focus(),300)}
 async function obDone(){const n=$('obn').value.trim();if(!n){$('obn').focus();$('obn').style.borderColor='var(--r)';return}S.name=n;if(!S.cur){S.cur=_sel||'USD';S.fx=null}persist();$('ob').style.display='none';render();await liveFx(false);render()}
 
-initFb();watchAuth();render();if(!_user&&(!S.name||!S.cur))onboard();else if(S.name&&S.cur&&(!S.fx||!isUSD()))liveFx(false).then(render);refresh();setInterval(()=>{if(!document.hidden)refresh()},60000);setInterval(greet,60000);matchMedia('(prefers-color-scheme: dark)').addEventListener('change',theme);
+initFb();watchAuth();logVisit(_user);render();if(!_user&&(!S.name||!S.cur))onboard();else if(S.name&&S.cur&&(!S.fx||!isUSD()))liveFx(false).then(render);refresh();setInterval(()=>{if(!document.hidden)refresh()},60000);setInterval(greet,60000);matchMedia('(prefers-color-scheme: dark)').addEventListener('change',theme);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script></body></html>
